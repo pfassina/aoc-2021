@@ -1,7 +1,6 @@
 from dataclasses import dataclass
 from queue import PriorityQueue
 import sys
-import time
 
 
 def read_file(path) -> list[str]:
@@ -131,20 +130,15 @@ def get_path(matrix: Matrix) -> int:
     pq = PriorityQueue()
     pq.put((matrix.start.risk, matrix.start))
 
-    visited: list[Node] = []
+    visited: set[Node] = set()
 
-    i = 0
-    start = time.time()
     while not pq.empty():
         _, node = pq.get()
-        if i % 2500 == 0:
-            i += 1
-            print(i, time.time() - start)
 
         if node == matrix.end:
             return min_path[matrix.end]
 
-        visited.append(node)
+        visited.add(node)
 
         neighbors = matrix.get_neighbors(node)
 
