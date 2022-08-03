@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+import math
 
 
 def parse_hexa(hexa: str) -> str:
@@ -32,9 +33,6 @@ class Type:
     def __eq__(self, __o: object) -> bool:
         return int(self.bit_array, 2) == __o
 
-    def __repr__(self) -> str:
-        return str(int(self.bit_array, 2))
-
 
 @dataclass(slots=True)
 class Last:
@@ -56,7 +54,7 @@ class Bit:
         return len(self.bit_array)
 
     def __repr__(self) -> str:
-        return str(int(self.bit_array, 2))
+        return str(self.bit_array)
 
 
 @dataclass(slots=True)
@@ -99,7 +97,7 @@ class Packet:
         return 6 + sum(b.length for b in self.literals) + len(self.literals)
 
     @property
-    def values(self) -> int:
+    def value(self) -> int:
         return int("".join(str(b) for b in self.literals), 2)
 
     @property
@@ -124,6 +122,32 @@ class Operator:
     @property
     def length(self) -> int:
         return self.header.bits + sum(p.length for p in self.packets)
+
+    @property
+    def value(self) -> int:
+
+        if self.header.type == 0:
+            return sum(p.value for p in self.packets)
+
+        if self.header.type == 1:
+            return math.prod(p.value for p in self.packets)
+
+        if self.header.type == 2:
+            return min(p.value for p in self.packets)
+
+        if self.header.type == 3:
+            return max(p.value for p in self.packets)
+
+        if self.header.type == 5:
+            return 1 if self.packets[0].value > self.packets[1].value else 0
+
+        if self.header.type == 6:
+            return 1 if self.packets[0].value < self.packets[1].value else 0
+
+        if self.header.type == 7:
+            return 1 if self.packets[0].value == self.packets[1].value else 0
+
+        return 1
 
     def __repr__(self) -> str:
         v = self.header.version
@@ -270,19 +294,24 @@ def part_1(input_lines: list[str]):
 
     bit_array = parse_input(input_lines[0])
     packets = get_operator(bit_array)
-    visited = dfs(packets, [])
 
+    visited = dfs(packets, [])
     versions = count_version(visited)
 
     return versions
 
 
-# def part_2(input_lines: list[str]):
-#     return
+def part_2(input_lines: list[str]):
+    for line in input_lines:
+        bit_array = parse_input(line)
+        packets = get_operator(bit_array)
+        print(packets.value)
+
+    return
 
 
 if __name__ == "__main__":
     inp = read_file("input.txt")
-    out = part_1(inp)
+    out = part_2(inp)
 
     print(out)
