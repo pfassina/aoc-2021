@@ -1,5 +1,17 @@
 from dataclasses import dataclass
-from os import wait
+
+
+def parse_hexa(hexa: str) -> str:
+    return bin(int(hexa, 16))[2:].zfill(4)
+
+
+def parse_input(line: str) -> str:
+    return "".join([parse_hexa(c) for c in line])
+
+
+def read_file(path) -> list[str]:
+    with open(path, "r") as file:
+        return file.read().splitlines()
 
 
 @dataclass(slots=True)
@@ -8,6 +20,9 @@ class Version:
 
     def __repr__(self) -> str:
         return str(int(self.bit_array, 2))
+
+    def __int__(self) -> int:
+        return int(self.bit_array, 2)
 
 
 @dataclass(slots=True)
@@ -36,8 +51,12 @@ class Last:
 class Bit:
     bit_array: str
 
+    @property
+    def length(self) -> int:
+        return len(self.bit_array)
+
     def __repr__(self) -> str:
-        return self.bit_array
+        return str(int(self.bit_array, 2))
 
 
 @dataclass(slots=True)
@@ -45,117 +64,217 @@ class LengthType:
     bit_array: str
 
     @property
-    def range(self) -> int:
-        return 11 if bool(int(self.bit_array)) else 15
+    def is_packets(self) -> bool:
+        return True if bool(int(self.bit_array)) else False
+
+    @property
+    def bits(self) -> int:
+        return 11 if self.is_packets else 15
 
     def __repr__(self) -> str:
-        return str(bool(self.bit_array))
+        return "Packets" if self.is_packets else "Bits"
 
 
-@dataclass
-class Packet:
+@dataclass(slots=True)
+class Header:
     version: Version
     type: Type
-    bits: list[Bit]
+    length_type: LengthType | None = None
+    length: int = 0
+
+    @property
+    def bits(self) -> int:
+        if self.length_type:
+            return 6 + 1 + self.length_type.bits
+        return 6
+
+
+@dataclass(slots=True)
+class Packet:
+    header: Header
+    literals: list[Bit]
 
     @property
     def length(self) -> int:
-        return 3 + 3 + sum(len(str(b)) for b in self.bits)
+        return 6 + sum(b.length for b in self.literals) + len(self.literals)
 
     @property
-    def literal(self) -> bool:
-        return self.type == 4
+    def values(self) -> int:
+        return int("".join(str(b) for b in self.literals), 2)
 
     @property
-    def value(self) -> int:
-        if self.literal:
-            return int("".join(str(b) for b in self.bits), 2)
-        else:
-            return 0
+    def packets(self) -> None:
+        return None
+
+    def __repr__(self) -> str:
+        v = self.header.version
+        t = self.header.type
+        lt = self.literals
+        return f"Packet: (V: {v} | T: {t} | L: {lt})"
+
+    def __eq__(self, __o: object) -> bool:
+        return id(self) == id(__o)
 
 
 @dataclass
 class Operator:
-    version: Version
-    type: Type
+    header: Header
     packets: list
 
     @property
     def length(self) -> int:
-        return 6 + sum(p.length for p in self.packets)
+        return self.header.bits + sum(p.length for p in self.packets)
+
+    def __repr__(self) -> str:
+        v = self.header.version
+        t = self.header.type
+        p = self.packets
+        return f"Operator (V: {v} | T: {t} | P: {p})"
 
 
-def chop_bit(input: str, start: int, length: int) -> str:
+SubPacket = Operator | Packet
+
+
+def parse_bits(bit_array: str, start: int, length: int) -> str:
     a = start
     b = start + length
-    return input[a:b]
+    return bit_array[a:b]
 
 
-def chop_packet(bit_array: str) -> Packet:
-    v = Version(chop_bit(bit_array, 0, 3))
-    t = Type(chop_bit(bit_array, 3, 3))
+def get_type(bit_array: str, start: int) -> Type:
+    return Type(parse_bits(bit_array, start, 3))
 
-    bits = []
-    i = 6
+
+def get_version(bit_array: str, start: int) -> Version:
+    return Version(parse_bits(bit_array, start, 3))
+
+
+def get_length_type(bit_array: str, start: int) -> LengthType:
+    return LengthType(parse_bits(bit_array, start, 1))
+
+
+def get_length(bit_array: str, start: int, length_type: LengthType) -> int:
+    return int(parse_bits(bit_array, start, length_type.bits), 2)
+
+
+def get_last(bit_array: str, start: int) -> Last:
+    return Last(parse_bits(bit_array, start, 1))
+
+
+def get_literal(bit_array: str, start: int) -> Bit:
+    return Bit(parse_bits(bit_array, start, 4))
+
+
+def get_header(bit_array: str) -> Header:
+
+    v = get_version(bit_array, 0)
+    t = get_type(bit_array, 3)
+
+    if t == 4:
+        return Header(v, t)
+
+    lt = get_length_type(bit_array, 6)
+    length = get_length(bit_array, 7, lt)
+
+    return Header(version=v, type=t, length_type=lt, length=length)
+
+
+def get_packet(bit_array: str) -> Packet:
+
+    header = get_header(bit_array)
+
+    literals = []
+    i = header.bits
     while i < len(bit_array):
-        last = Last(chop_bit(bit_array, i, 1))
+        last = get_last(bit_array, i)
         i += 1
-        bits.append(Bit(chop_bit(bit_array, i, 4)))
+        literals.append(get_literal(bit_array, i))
         i += 4
         if last:
             break
 
-    return Packet(v, t, bits)
+    return Packet(header, literals)
 
 
-def chop_header(bit_array: str) -> tuple[Version, Type, int]:
+def get_subpacket(bit_array: str) -> Operator | Packet:
 
-    v = Version(chop_bit(bit_array, 0, 3))
-    t = Type(chop_bit(bit_array, 3, 3))
+    header = get_header(bit_array)
 
-    if t != 4:
-        lt = LengthType(chop_bit(bit_array, 6, 1))
-        length = lt.range
+    if header.type == 4:
+        return get_packet(bit_array)
 
-    else:
-        length = 0
-
-    return v, t, length
+    return get_operator(bit_array)
 
 
-def chop_operator(bit_array: str, packets: list) -> Operator:
+def get_by_packets(packet_count: int, bit_array: str) -> list[SubPacket]:
+    packets: list[SubPacket] = []
 
-    v, t, length = chop_header(bit_array)
-    start = 7 + length
-
-    next_type = Type(chop_bit(bit_array, 3, 3))
-    if next_type == 4:
-        packets.append(chop_packet(bit_array))
-        return Operator(v, t, packets)
-
-    return chop_operator(bit_array[start:], packets)
-    # return Operator(v, t, packets)
+    i = 0
+    while len(packets) < packet_count:
+        subpacket = get_subpacket(bit_array[i:])
+        packets.append(subpacket)
+        i += subpacket.length
+    return packets
 
 
-def parse_hexa(hexa: str) -> str:
-    return bin(int(hexa, 16))[2:].zfill(4)
+def get_by_bits(bit_count: int, bit_array: str) -> list[SubPacket]:
+
+    subpackets: list[SubPacket] = []
+    i = 0
+    while i < bit_count:
+        subpacket = get_subpacket(bit_array[i:])
+        subpackets.append(subpacket)
+        i += subpacket.length
+
+    return subpackets
 
 
-def parse_input(line: str) -> str:
-    return "".join([parse_hexa(c) for c in line])
+def get_subpacket_list(header: Header, bit_array: str) -> list[SubPacket]:
+
+    is_packets = header.length_type.is_packets  # type: ignore
+    length = header.length
+
+    if is_packets:
+        return get_by_packets(length, bit_array)
+
+    return get_by_bits(length, bit_array[:length])
 
 
-def read_file(path) -> list[str]:
-    with open(path, "r") as file:
-        return file.read().splitlines()
+def get_operator(bit_array: str) -> Operator:
+
+    header = get_header(bit_array)
+    start = header.bits
+    packets = get_subpacket_list(header, bit_array[start:])
+
+    return Operator(header, packets)
+
+
+def count_version(packet_list: list[SubPacket]) -> int:
+    return sum(int(packet.header.version) for packet in packet_list)
+
+
+def dfs(packet, visited):
+
+    if packet not in visited:
+        visited.append(packet)
+        if packet.header.type == 4:
+            return visited
+
+        for p in packet.packets:
+            dfs(p, visited)
+
+    return visited
 
 
 def part_1(input_lines: list[str]):
 
-    h = parse_input(input_lines[0])
-    a = chop_operator(h, [])
+    bit_array = parse_input(input_lines[0])
+    packets = get_operator(bit_array)
+    visited = dfs(packets, [])
 
-    return a
+    versions = count_version(visited)
+
+    return versions
 
 
 # def part_2(input_lines: list[str]):
@@ -163,7 +282,7 @@ def part_1(input_lines: list[str]):
 
 
 if __name__ == "__main__":
-    inp = read_file("sample.txt")
+    inp = read_file("input.txt")
     out = part_1(inp)
 
     print(out)
