@@ -215,9 +215,6 @@ def part_2(input_lines: list[str]):
     t = parse_input(input_lines[0])
     v_range = possible_v(t)
 
-    # for v in v_range:
-    #     print(v)
-    #
     return len(v_range)
 
 
